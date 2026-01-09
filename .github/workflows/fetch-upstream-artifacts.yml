@@ -1,0 +1,126 @@
+name: Fetch upstream artifacts (Windows)
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 */12 * * *" # every 12 hours
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: windows-latest
+
+    env:
+      # MaterialX
+      MATERIALX_REPO: AcademySoftwareFoundation/MaterialX
+      MATERIALX_WORKFLOW: main
+      MATERIALX_BRANCH: main
+      MATERIALX_ARTIFACT_NAME: MaterialX_Windows_VS2022_x64_Python314
+
+      # MDL SDK
+      MDL_REPO: NVIDIA/MDL-SDK
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm gh is available
+        shell: pwsh
+        run: gh --version
+
+      - name: Download MaterialX artifact (search recent successful runs; handle pagination)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $dest = "artifacts\materialx"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Remove-Item -Recurse -Force "$dest\*" -ErrorAction SilentlyContinue
+
+          Write-Host "Repo:     $env:MATERIALX_REPO"
+          Write-Host "Workflow: $env:MATERIALX_WORKFLOW"
+          Write-Host "Branch:   $env:MATERIALX_BRANCH"
+          Write-Host "Artifact: $env:MATERIALX_ARTIFACT_NAME"
+
+          $runIdsText = gh run list `
+            -R $env:MATERIALX_REPO `
+            -w $env:MATERIALX_WORKFLOW `
+            -b $env:MATERIALX_BRANCH `
+            -L 40 `
+            --json databaseId,conclusion `
+            -q '.[] | select(.conclusion=="success") | .databaseId'
+
+          $runIds = $runIdsText -split "`n" | Where-Object { $_ -match '^\d+$' }
+          if (-not $runIds -or $runIds.Count -eq 0) {
+            throw "No successful runs found. Check MATERIALX_WORKFLOW/MATERIALX_BRANCH."
+          }
+
+          $foundRun = $null
+          foreach ($id in $runIds) {
+            Write-Host "Checking run_id=$id for artifact (per_page=100)..."
+            $apiPath = "/repos/$env:MATERIALX_REPO/actions/runs/$id/artifacts?per_page=100"
+
+            $namesText = gh api $apiPath --jq ".artifacts[].name"
+            $names = @()
+            if ($namesText) { $names = $namesText -split "`n" }
+
+            if ($names -contains $env:MATERIALX_ARTIFACT_NAME) {
+              $foundRun = $id
+              break
+            }
+          }
+
+          if (-not $foundRun) {
+            throw "Did not find '$env:MATERIALX_ARTIFACT_NAME' in the last $($runIds.Count) successful runs."
+          }
+
+          Write-Host "Found artifact in run_id=$foundRun. Downloading..."
+          gh run download $foundRun `
+            -R $env:MATERIALX_REPO `
+            -n $env:MATERIALX_ARTIFACT_NAME `
+            -D $dest | Out-Host
+
+      - name: Download latest MDL-SDK nt-x86-64.zip (via API)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $dest = "artifacts\mdl"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Remove-Item -Recurse -Force "$dest\*" -ErrorAction SilentlyContinue
+
+          $assetName = gh api "/repos/$env:MDL_REPO/releases/latest" --jq `
+            '.assets[] | select(.name | endswith("nt-x86-64.zip")) | .name' |
+            Select-Object -First 1
+
+          $assetUrl = gh api "/repos/$env:MDL_REPO/releases/latest" --jq `
+            '.assets[] | select(.name | endswith("nt-x86-64.zip")) | .browser_download_url' |
+            Select-Object -First 1
+
+          if (-not $assetUrl) { throw "No nt-x86-64.zip found in latest release assets for $env:MDL_REPO" }
+
+          $outPath = Join-Path $dest $assetName
+          Write-Host "Downloading $assetName"
+          Invoke-WebRequest -Uri $assetUrl -OutFile $outPath
+          Write-Host "Saved to $outPath"
+
+      - name: List downloaded files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Write-Host "=== MaterialX ==="
+          Get-ChildItem -Recurse artifacts\materialx | Select-Object FullName,Length
+          Write-Host "=== MDL-SDK ==="
+          Get-ChildItem -Recurse artifacts\mdl | Select-Object FullName,Length
+
+      - name: Upload downloads as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-downloads-windows
+          path: artifacts/
+          if-no-files-found: error
