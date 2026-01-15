@@ -54,7 +54,9 @@ def main():
     ap.add_argument("--run-number", default=os.getenv("GITHUB_RUN_NUMBER", ""))
     args = ap.parse_args()
 
-    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    now = dt.datetime.now(dt.timezone.utc)
+    generated_date_utc = now.strftime("%Y-%m-%d")
+    generated_time_utc = now.strftime("%H:%M:%S")
 
     mx = file_inventory(Path(args.materialx_dir))
     mdl = file_inventory(Path(args.mdl_dir))
@@ -83,7 +85,8 @@ def main():
 
   <h2>Run metadata</h2>
   <ul>
-    <li><b>Generated (UTC):</b> <code>{esc(now)}</code></li>
+    <li><b>Generated date (UTC):</b> <code>{esc(generated_date_utc)}</code></li>
+    <li><b>Generated time (UTC):</b> <code>{esc(generated_time_utc)}</code></li>
     <li><b>Repo:</b> <code>{esc(args.repo)}</code></li>
     <li><b>GitHub run_id:</b> <code>{esc(args.run_id)}</code> (run_number <code>{esc(args.run_number)}</code>)</li>
   </ul>
