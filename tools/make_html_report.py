@@ -20,7 +20,6 @@ def file_inventory(root: Path, max_files: int = 300):
             files.append((rel, size))
             total += size
 
-    # keep the report readable
     shown = files[:max_files]
     return {
         "root": str(root),
@@ -45,13 +44,17 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--materialx-dir", required=True)
     ap.add_argument("--mdl-dir", required=True)
+    ap.add_argument("--test-log", required=True)
+
     ap.add_argument("--materialx-artifact-name", default="")
     ap.add_argument("--materialx-run-id", default="")
     ap.add_argument("--mdl-asset-name", default="")
     ap.add_argument("--mdl-release-tag", default="")
+
     ap.add_argument("--repo", default=os.getenv("GITHUB_REPOSITORY", ""))
     ap.add_argument("--run-id", default=os.getenv("GITHUB_RUN_ID", ""))
     ap.add_argument("--run-number", default=os.getenv("GITHUB_RUN_NUMBER", ""))
+
     args = ap.parse_args()
 
     now = dt.datetime.now(dt.timezone.utc)
@@ -60,6 +63,12 @@ def main():
 
     mx = file_inventory(Path(args.materialx_dir))
     mdl = file_inventory(Path(args.mdl_dir))
+
+    log_path = Path(args.test_log)
+    if log_path.exists():
+        test_log_text = log_path.read_text(encoding="utf-8", errors="replace")
+    else:
+        test_log_text = f"(log not found: {log_path})"
 
     def esc(s): return html.escape(str(s))
 
@@ -73,7 +82,8 @@ def main():
   <title>Upstream Artifact Test Report</title>
   <style>
     body {{ font-family: Segoe UI, Arial, sans-serif; margin: 24px; }}
-    code, pre {{ background: #f6f8fa; padding: 2px 6px; border-radius: 4px; }}
+    code, pre {{ background: #f6f8fa; padding: 8px 10px; border-radius: 6px; }}
+    pre {{ overflow-x: auto; }}
     table {{ border-collapse: collapse; width: 100%; }}
     th, td {{ border: 1px solid #ddd; padding: 6px 8px; font-size: 13px; }}
     th {{ background: #f0f0f0; text-align: left; }}
@@ -91,12 +101,14 @@ def main():
     <li><b>GitHub run_id:</b> <code>{esc(args.run_id)}</code> (run_number <code>{esc(args.run_number)}</code>)</li>
   </ul>
 
+  <h2>mx_codegen.py output</h2>
+  <pre>{esc(test_log_text)}</pre>
+
   <h2>MaterialX</h2>
   <ul>
     <li><b>Artifact name:</b> <code>{esc(args.materialx_artifact_name)}</code></li>
     <li><b>Source run_id:</b> <code>{esc(args.materialx_run_id)}</code></li>
     <li><b>Downloaded to:</b> <code>{esc(mx["root"])}</code></li>
-    <li><b>Exists:</b> <code>{esc(mx["exists"])}</code></li>
     <li><b>Files:</b> <code>{esc(mx["count"])}</code>, <b>Total:</b> <code>{esc(fmt_bytes(mx["total_bytes"]))}</code></li>
   </ul>
 
@@ -112,16 +124,9 @@ def main():
     <li><b>Latest release tag:</b> <code>{esc(args.mdl_release_tag)}</code></li>
     <li><b>Downloaded asset:</b> <code>{esc(args.mdl_asset_name)}</code></li>
     <li><b>Downloaded to:</b> <code>{esc(mdl["root"])}</code></li>
-    <li><b>Exists:</b> <code>{esc(mdl["exists"])}</code></li>
     <li><b>Files:</b> <code>{esc(mdl["count"])}</code>, <b>Total:</b> <code>{esc(fmt_bytes(mdl["total_bytes"]))}</code></li>
   </ul>
 
-  <h3>MDL SDK file sample</h3>
-  <table>
-    <tr><th>Path</th><th>Size</th></tr>
-    {''.join(f"<tr><td><code>{esc(p)}</code></td><td><code>{esc(fmt_bytes(sz))}</code></td></tr>" for p, sz in mdl.get("files", []))}
-  </table>
-  <p class="muted">{esc("Truncated list." if mdl.get("truncated") else "")}</p>
 </body>
 </html>
 """

@@ -1,4 +1,4 @@
-name: Fetch upstream artifacts + publish HTML report (Windows)
+name: Fetch upstream artifacts + run mx_codegen + publish report (Windows)
 
 on:
   workflow_dispatch: {}
@@ -6,9 +6,7 @@ on:
     - cron: "0 9 * * *" # daily (UTC)
 
 permissions:
-  contents: write   # needed to publish to gh-pages
-  pages: write
-  id-token: write
+  contents: write  # needed to push gh-pages
 
 jobs:
   run:
@@ -100,16 +98,31 @@ jobs:
 
           if (-not $assetUrl) { throw "No nt-x86-64.zip found in latest release assets for $env:MDL_REPO" }
 
-          $outPath = Join-Path $dest $assetName
-          Invoke-WebRequest -Uri $assetUrl -OutFile $outPath
+          Invoke-WebRequest -Uri $assetUrl -OutFile (Join-Path $dest $assetName)
 
           "mdl_release_tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "mdl_asset_name=$assetName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - name: Setup Python
+      - name: Setup Python 3.14
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
+          allow-prereleases: true
+
+      - name: Run mx_codegen.py and capture output
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force test-results | Out-Null
+
+          $distRoot = (Resolve-Path "artifacts\materialx").Path
+          "python: $(python --version)" | Out-File -Encoding utf8 test-results\mx_codegen.log
+
+          # capture stdout+stderr into log
+          python .\mx_codegen.py --dist_root $distRoot 2>&1 |
+            Tee-Object -FilePath test-results\mx_codegen.log -Append
+
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Generate HTML report
         if: always()
@@ -119,30 +132,44 @@ jobs:
             --out test-results\report.html `
             --materialx-dir artifacts\materialx `
             --mdl-dir artifacts\mdl `
+            --test-log test-results\mx_codegen.log `
             --materialx-artifact-name "${{ env.MATERIALX_ARTIFACT_NAME }}" `
             --materialx-run-id "${{ steps.materialx.outputs.materialx_run_id }}" `
             --mdl-asset-name "${{ steps.mdl.outputs.mdl_asset_name }}" `
             --mdl-release-tag "${{ steps.mdl.outputs.mdl_release_tag }}"
 
-      - name: Upload HTML report as run artifact (easy download from Actions UI)
+      - name: Upload report + logs as run artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: html-report
-          path: test-results/report.html
+          name: test-results
+          path: test-results/
           retention-days: 30
 
-      # ----- Publish to GitHub Pages with history -----
+      # ----- Publish to GitHub Pages with history (gh-pages) -----
+
+      - name: Check if gh-pages branch exists
+        id: pages_branch
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Continue"
+          gh api "/repos/${{ github.repository }}/branches/gh-pages" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            "exists=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          } else {
+            "exists=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
 
       - name: Checkout gh-pages (for history)
-        if: always()
-        continue-on-error: true
+        if: ${{ steps.pages_branch.outputs.exists == 'true' }}
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: pages
 
-      - name: Prepare site content (keep previous reports + add this run)
+      - name: Prepare site content (add this run; keep previous)
         if: always()
         shell: pwsh
         run: |
@@ -150,7 +177,6 @@ jobs:
 
           New-Item -ItemType Directory -Force site | Out-Null
 
-          # If gh-pages exists, copy it into site (excluding .git)
           if (Test-Path "pages") {
             Get-ChildItem -Force "pages" | Where-Object { $_.Name -ne ".git" } | ForEach-Object {
               Copy-Item $_.FullName "site" -Recurse -Force
@@ -164,9 +190,9 @@ jobs:
           New-Item -ItemType Directory -Force "site\reports\latest" | Out-Null
           Copy-Item "test-results\report.html" "site\reports\latest\index.html" -Force
 
-          # Simple index page listing all runs we have
-          New-Item -ItemType Directory -Force "site\reports" | Out-Null
-          $dirs = Get-ChildItem "site\reports" -Directory | Where-Object { $_.Name -match '^\d+$' } | Sort-Object Name -Descending
+          $dirs = Get-ChildItem "site\reports" -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^\d+$' } | Sort-Object Name -Descending
+
           $links = $dirs | ForEach-Object { "<li><a href=`"reports/$($_.Name)/`">$($_.Name)</a></li>" }
 
           @"
@@ -182,10 +208,11 @@ jobs:
           </body></html>
           "@ | Set-Content -Encoding UTF8 site\index.html
 
-      - name: Publish to GitHub Pages (gh-pages branch)
+      - name: Publish to gh-pages
         if: always()
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_branch: gh-pages
           publish_dir: site
+          keep_files: true
