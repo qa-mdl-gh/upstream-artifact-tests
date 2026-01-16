@@ -6,7 +6,7 @@ on:
     - cron: "0 9 * * *" # daily (UTC)
 
 permissions:
-  contents: write  # needed to push gh-pages
+  contents: write # needed to push gh-pages
 
 jobs:
   run:
@@ -109,14 +109,21 @@ jobs:
           python-version: "3.14"
           allow-prereleases: true
 
-      - name: Run mx_codegen.py and capture output
+      - name: Run mx_codegen.py (output -> mx_codegen_out) and capture output
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+
           New-Item -ItemType Directory -Force test-results | Out-Null
 
+          # Ensure a clean output directory each run
+          if (Test-Path "mx_codegen_out") { Remove-Item -Recurse -Force "mx_codegen_out" }
+          New-Item -ItemType Directory -Force "mx_codegen_out" | Out-Null
+
           $distRoot = (Resolve-Path "artifacts\materialx").Path
+
           "python: $(python --version)" | Out-File -Encoding utf8 test-results\mx_codegen.log
+          "command: python .\mx_codegen.py --dist_root `"$distRoot`"" | Out-File -Encoding utf8 test-results\mx_codegen.log -Append
 
           # capture stdout+stderr into log
           python .\mx_codegen.py --dist_root $distRoot 2>&1 |
@@ -138,7 +145,8 @@ jobs:
             --mdl-asset-name "${{ steps.mdl.outputs.mdl_asset_name }}" `
             --mdl-release-tag "${{ steps.mdl.outputs.mdl_release_tag }}"
 
-      - name: Upload report + logs as run artifacts
+      # Upload ALL run outputs as artifacts (so you can download any past run’s data)
+      - name: Upload report + logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -146,10 +154,27 @@ jobs:
           path: test-results/
           retention-days: 30
 
-      # ----- Publish to GitHub Pages with history (gh-pages) -----
+      - name: Upload mx_codegen output directory
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mx-codegen-out
+          path: mx_codegen_out/
+          retention-days: 30
+
+      - name: Upload upstream downloads (MaterialX + MDL SDK)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-downloads-windows
+          path: artifacts/
+          retention-days: 30
+
+      # ----- Publish report to GitHub Pages with history (optional but gives easy browsing) -----
 
       - name: Check if gh-pages branch exists
         id: pages_branch
+        if: always()
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -174,7 +199,6 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-
           New-Item -ItemType Directory -Force site | Out-Null
 
           if (Test-Path "pages") {

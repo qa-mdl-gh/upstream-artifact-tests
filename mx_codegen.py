@@ -167,7 +167,11 @@ def _load_libraries(mxf, mx, library_folders, search_path, lib_doc) -> None:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dist_root", required=True)
-    ap.add_argument("--out_dir", default="mx_codegen_out")
+    ap.add_argument(
+        "--out_dir",
+        default=str(SCRIPT_DIR / "mx_codegen_out"),
+        help="Output directory (default: next to this script).",
+    )
     ap.add_argument("--targets", nargs="+", default=["glsl", "osl", "mdl"])
     args = ap.parse_args()
 
