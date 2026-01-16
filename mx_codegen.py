@@ -165,6 +165,9 @@ def _load_libraries(mxf, mx, library_folders, search_path, lib_doc) -> None:
 
 
 def main():
+    
+    SCRIPT_DIR = Path(__file__).resolve().parent
+    
     ap = argparse.ArgumentParser()
     ap.add_argument("--dist_root", required=True)
     ap.add_argument(
